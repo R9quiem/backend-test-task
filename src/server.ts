@@ -7,7 +7,7 @@ const db = openDatabase(
     process.env.DATABASE_PATH ?? "./data/app.sqlite"
 );
 
-const app = createApp(apiKey);
+const app = createApp(apiKey, db);
 
 const port = Number(process.env.PORT ?? 3000);
 
