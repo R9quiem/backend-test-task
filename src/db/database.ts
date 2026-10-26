@@ -5,7 +5,7 @@ import {schema} from "./schema";
 
 export function openDatabase(databasePath: string): DatabaseSync {
     if (databasePath.trim() === ""){
-        throw new Error("Путь к базе данных (databasePath) не может быть пустым");
+        throw new Error("Путь к базе данных (databasePath) не задан");
     }
 
     const absolutePath = resolve(databasePath);
