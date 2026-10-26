@@ -28,7 +28,10 @@ export const validateId: RequestHandler = (req, res, next) => {
 
     if (!Number.isSafeInteger(id) || id <= 0) {
         res.status(400).json({
-            message: "Некорректный id",
+            error: {
+                code: "VALIDATION_ERROR",
+                message: "Некорректный id",
+            },
         });
         return;
     }
@@ -46,7 +49,10 @@ export const validateCreate: RequestHandler = (req, res, next) => {
         !hasOnlyFields(body, ["symbol", "name"])
     ) {
         res.status(400).json({
-            message: "Нужно передать только непустые строки symbol и name",
+            error: {
+                code: "VALIDATION_ERROR",
+                message: "Нужно передать только непустые строки symbol и name",
+            },
         });
         return;
     }
@@ -63,7 +69,10 @@ export const validateUpdate: RequestHandler = (req, res, next) => {
         !hasOnlyFields(body, ["name"])
     ) {
         res.status(400).json({
-            message: "Нужно передать только непустую строку name",
+            error: {
+                code: "VALIDATION_ERROR",
+                message: "Нужно передать только непустую строку name",
+            },
         });
         return;
     }

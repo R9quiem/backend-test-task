@@ -1,6 +1,7 @@
 import type {
     CryptocurrencyRepository,
 } from "../repositories/cryptocurrency.repository";
+import {createError} from "../errors/create-error";
 
 export function createCryptocurrencyService(
     repository: CryptocurrencyRepository,
@@ -15,10 +16,17 @@ export function createCryptocurrencyService(
         },
 
         create(symbol: string, name: string) {
-            return repository.create(
-                symbol.trim().toUpperCase(),
-                name.trim(),
-            );
+            const normalizedSymbol = symbol.trim().toUpperCase();
+            const normalizedName = name.trim();
+
+            if (repository.findBySymbol(normalizedSymbol)) {
+                throw createError(
+                    "CRYPTOCURRENCY_ALREADY_EXISTS",
+                    "Криптовалюта уже отслеживается",
+                );
+            }
+
+            return repository.create(normalizedSymbol, normalizedName);
         },
 
         updateName(id: number, name: string) {

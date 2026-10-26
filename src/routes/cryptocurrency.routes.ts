@@ -2,7 +2,7 @@ import { Router } from "express";
 import type {
     CryptocurrencyController,
 } from "../controllers/cryptocurrency.controller";
-import {validateCreate, validateId, validateUpdate} from "../validators/cryptocurrency.validator";
+import {validateCreate, validateId, validateUpdate} from "../middleware/cryptocurrency.validator";
 
 export function createCryptocurrencyRouter(
     controller: CryptocurrencyController,

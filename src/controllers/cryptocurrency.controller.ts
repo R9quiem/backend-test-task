@@ -17,7 +17,10 @@ export function createCryptocurrencyController(
 
             if (!cryptocurrency) {
                 res.status(404).json({
-                    message: "Криптовалюта не найдена",
+                    error: {
+                        code: "CRYPTOCURRENCY_NOT_FOUND",
+                        message: "Криптовалюта не найдена",
+                    },
                 });
                 return;
             }
@@ -40,7 +43,10 @@ export function createCryptocurrencyController(
 
             if (!cryptocurrency) {
                 res.status(404).json({
-                    message: "Криптовалюта не найдена",
+                    error: {
+                        code: "CRYPTOCURRENCY_NOT_FOUND",
+                        message: "Криптовалюта не найдена",
+                    },
                 });
                 return;
             }
@@ -54,7 +60,10 @@ export function createCryptocurrencyController(
 
             if (!removed) {
                 res.status(404).json({
-                    message: "Криптовалюта не найдена",
+                    error: {
+                        code: "CRYPTOCURRENCY_NOT_FOUND",
+                        message: "Криптовалюта не найдена",
+                    },
                 });
                 return;
             }
