@@ -19,6 +19,147 @@ function isObject(
     );
 }
 
+function validateIds(ids: number[]): void {
+    if (ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+        throw new Error(
+            "Идентификаторы CoinMarketCap должны быть положительными целыми числами",
+        );
+    }
+}
+
+export function mapCoinMarketCapError(error: unknown): Error {
+    if (!axios.isAxiosError(error)) {
+        return error instanceof Error
+            ? error
+            : new Error("Неизвестная ошибка клиента CoinMarketCap");
+    }
+
+    if (
+        error.code === "ECONNABORTED" ||
+        error.code === "ETIMEDOUT"
+    ) {
+        return createError(
+            "CMC_TIMEOUT",
+            "CoinMarketCap не ответил вовремя",
+        );
+    }
+
+    if (!error.response) {
+        return createError(
+            "CMC_UNAVAILABLE",
+            "Не удалось подключиться к CoinMarketCap",
+        );
+    }
+
+    const status = error.response.status;
+
+    if (status === 401 || status === 403) {
+        return createError(
+            "CMC_ACCESS_DENIED",
+            "Нет доступа к CoinMarketCap: проверьте ключ и тариф",
+        );
+    }
+
+    if (status === 429) {
+        return createError(
+            "CMC_RATE_LIMIT",
+            "Превышен лимит запросов CoinMarketCap",
+        );
+    }
+
+    if (status >= 500) {
+        return createError(
+            "CMC_UNAVAILABLE",
+            "CoinMarketCap временно недоступен",
+        );
+    }
+
+    return createError(
+        "CMC_REQUEST_FAILED",
+        "CoinMarketCap отклонил запрос",
+    );
+}
+
+function parseLatestPrices(
+    body: unknown,
+    ids: number[],
+    currency: string,
+): PriceQuote[] {
+    if (
+        !isObject(body) ||
+        !isObject(body.status) ||
+        !Array.isArray(body.data)
+    ) {
+        throw createError(
+            "CMC_INVALID_RESPONSE",
+            "CoinMarketCap вернул некорректный ответ",
+        );
+    }
+
+    if (
+        body.status.error_code !== 0 &&
+        body.status.error_code !== "0"
+    ) {
+        throw createError(
+            "CMC_REQUEST_FAILED",
+            "CoinMarketCap сообщил об ошибке",
+        );
+    }
+
+    const records: unknown[] = body.data;
+    const receivedAt = new Date().toISOString();
+
+    return ids.map((id) => {
+        const matches = records.filter(
+            (record) => isObject(record) && record.id === id,
+        );
+
+        const record = matches[0];
+
+        if (
+            matches.length !== 1 ||
+            !isObject(record) ||
+            typeof record.symbol !== "string" ||
+            record.symbol.trim() === "" ||
+            !Array.isArray(record.quote)
+        ) {
+            throw createError(
+                "CMC_INVALID_RESPONSE",
+                `Нет однозначных данных для монеты CoinMarketCap ${id}`,
+            );
+        }
+
+        const quotes: unknown[] = record.quote;
+
+        const matchingQuotes = quotes.filter(
+            (quote) => isObject(quote) && quote.symbol === currency,
+        );
+
+        const quote = matchingQuotes[0];
+
+        if (
+            matchingQuotes.length !== 1 ||
+            !isObject(quote) ||
+            typeof quote.price !== "number" ||
+            !Number.isFinite(quote.price) ||
+            quote.price < 0
+        ) {
+            throw createError(
+                "CMC_INVALID_RESPONSE",
+                `Некорректная цена для монеты CoinMarketCap ${id}`,
+            );
+        }
+
+        return {
+            coinmarketcapId: id,
+            symbol: record.symbol,
+            price: quote.price,
+            currency,
+            receivedAt,
+        };
+    });
+}
+
 export function createCoinMarketCapClient(
     apiKey: string,
     currency = "USD",
@@ -50,13 +191,8 @@ export function createCoinMarketCapClient(
 
     return {
         async getLatestPrices(ids: number[]): Promise<PriceQuote[]> {
-            if (
-                ids.some((id) => !Number.isSafeInteger(id) || id <= 0)
-            ) {
-                throw new Error(
-                    "Идентификаторы CoinMarketCap должны быть положительными целыми числами",
-                );
-            }
+
+            validateIds(ids);
 
             const uniqueIds = [...new Set(ids)];
 
@@ -79,123 +215,10 @@ export function createCoinMarketCapClient(
 
                 body = response.data;
             } catch (error) {
-                if (!axios.isAxiosError(error)) {
-                    throw error;
-                }
-
-                if (
-                    error.code === "ECONNABORTED" ||
-                    error.code === "ETIMEDOUT"
-                ) {
-                    throw createError(
-                        "CMC_TIMEOUT",
-                        "CoinMarketCap не ответил вовремя",
-                    );
-                }
-
-                const status = error.response?.status;
-
-                if (status === 401 || status === 403) {
-                    throw createError(
-                        "CMC_ACCESS_DENIED",
-                        "Нет доступа к CoinMarketCap, либо неправильный ключ, либо тариф",
-                    );
-                }
-
-                if (status === 429) {
-                    throw createError(
-                        "CMC_RATE_LIMIT",
-                        "Превышен лимит запросов CoinMarketCap",
-                    );
-                }
-
-                if (!error.response || (status !== undefined && status >= 500)) {
-                    throw createError(
-                        "CMC_UNAVAILABLE",
-                        "CoinMarketCap временно недоступен",
-                    );
-                }
-
-                throw createError(
-                    "CMC_REQUEST_FAILED",
-                    "CoinMarketCap отклонил запрос",
-                );
+                throw mapCoinMarketCapError(error);
             }
 
-            if (
-                !isObject(body) ||
-                !isObject(body.status) ||
-                !Array.isArray(body.data)
-            ) {
-                throw createError(
-                    "CMC_INVALID_RESPONSE",
-                    "CoinMarketCap вернул некорректный ответ",
-                );
-            }
-
-            if (
-                body.status.error_code !== 0 &&
-                body.status.error_code !== "0"
-            ) {
-                throw createError(
-                    "CMC_REQUEST_FAILED",
-                    "CoinMarketCap сообщил об ошибке",
-                );
-            }
-
-            const records: unknown[] = body.data;
-            const receivedAt = new Date().toISOString();
-
-            return uniqueIds.map((id) => {
-                const matches = records.filter(
-                    (record) => isObject(record) && record.id === id,
-                );
-
-                const record = matches[0];
-
-                if (
-                    matches.length !== 1 ||
-                    !isObject(record) ||
-                    typeof record.symbol !== "string" ||
-                    record.symbol.trim() === "" ||
-                    !Array.isArray(record.quote)
-                ) {
-                    throw createError(
-                        "CMC_INVALID_RESPONSE",
-                        `Нету данных для монеты CoinMarketCap ${id}`,
-                    );
-                }
-
-                const quotes: unknown[] = record.quote;
-
-                const matchingQuotes = quotes.filter(
-                    (quote) =>
-                        isObject(quote) && quote.symbol === quoteCurrency,
-                );
-
-                const quote = matchingQuotes[0];
-
-                if (
-                    matchingQuotes.length !== 1 ||
-                    !isObject(quote) ||
-                    typeof quote.price !== "number" ||
-                    !Number.isFinite(quote.price) ||
-                    quote.price < 0
-                ) {
-                    throw createError(
-                        "CMC_INVALID_RESPONSE",
-                        `Некорректная цена для монеты CoinMarketCap ${id}`,
-                    );
-                }
-
-                return {
-                    coinmarketcapId: id,
-                    symbol: record.symbol,
-                    price: quote.price,
-                    currency: quoteCurrency,
-                    receivedAt,
-                };
-            });
+            return parseLatestPrices(body, uniqueIds, quoteCurrency);
         },
     };
 }
