@@ -15,18 +15,26 @@ export function createCryptocurrencyService(
             return repository.findById(id);
         },
 
-        create(symbol: string, name: string) {
+        create(
+            coinmarketcapId: number,
+            symbol: string,
+            name: string,
+        ) {
             const normalizedSymbol = symbol.trim().toUpperCase();
             const normalizedName = name.trim();
 
-            if (repository.findBySymbol(normalizedSymbol)) {
+            if (repository.findByCoinmarketcapId(coinmarketcapId)) {
                 throw createError(
                     "CRYPTOCURRENCY_ALREADY_EXISTS",
                     "Криптовалюта уже отслеживается",
                 );
             }
 
-            return repository.create(normalizedSymbol, normalizedName);
+            return repository.create(
+                coinmarketcapId,
+                normalizedSymbol,
+                normalizedName,
+            );
         },
 
         updateName(id: number, name: string) {

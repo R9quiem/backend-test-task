@@ -29,8 +29,13 @@ export function createCryptocurrencyController(
         },
 
         create(req: Request, res: Response): void {
-            const { symbol, name } = req.body;
-            const cryptocurrency = service.create(symbol, name);
+            const { coinmarketcapId, symbol, name } = req.body;
+
+            const cryptocurrency = service.create(
+                coinmarketcapId,
+                symbol,
+                name,
+            );
 
             res.status(201).json(cryptocurrency);
         },

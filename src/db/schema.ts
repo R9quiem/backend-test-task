@@ -1,7 +1,8 @@
 export const schema = `
     CREATE TABLE IF NOT EXISTS cryptocurrencies (
         id INTEGER PRIMARY KEY,
-        symbol TEXT NOT NULL UNIQUE CHECK (length(trim(symbol))>0),
+        coinmarketcap_id INTEGER NOT NULL UNIQUE CHECK (coinmarketcap_id > 0),
+        symbol TEXT NOT NULL CHECK (length(trim(symbol))>0),
         name TEXT NOT NULL CHECK (length(trim(name))>0),
         last_updated_at TEXT
     );

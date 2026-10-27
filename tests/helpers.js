@@ -49,6 +49,7 @@ async function createCoin(app, data = {}) {
     .post("/cryptocurrencies")
     .set("Authorization", `Bearer ${apiKey}`)
     .send({
+      coinmarketcapId: 1,
       symbol: "BTC",
       name: "Bitcoin",
       ...data,

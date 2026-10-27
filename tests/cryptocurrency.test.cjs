@@ -20,6 +20,13 @@ afterEach(() => {
 });
 
 describe("POST /cryptocurrencies", () => {
+
+  const validBody = {
+    coinmarketcapId: 1,
+    symbol: "BTC",
+    name: "Bitcoin",
+  };
+
   test("создаёт монету и нормализует данные", async () => {
     const coin = await createCoin(app, {
       symbol: " btc ",
@@ -28,6 +35,7 @@ describe("POST /cryptocurrencies", () => {
 
     expect(coin).toEqual({
       id: expect.any(Number),
+      coinmarketcapId: 1,
       symbol: "BTC",
       name: "Bitcoin",
       lastUpdatedAt: null,
@@ -42,17 +50,69 @@ describe("POST /cryptocurrencies", () => {
   });
 
   test.each([
-    { label: "пустой символ", body: { symbol: " ", name: "Bitcoin" } },
-    { label: "нет символа", body: { name: "Bitcoin" } },
-    { label: "нет названия", body: { symbol: "BTC" } },
-    { label: "пустое название", body: { symbol: "BTC", name: " " } },
-    { label: "символ - число", body: { symbol: 123, name: "Bitcoin" } },
-    { label: "название - null", body: { symbol: "BTC", name: null } },
+    {
+      label: "нет coinmarketcapId",
+      body: { symbol: "BTC", name: "Bitcoin" },
+    },
+    {
+      label: "coinmarketcapId - строка",
+      body: { ...validBody, coinmarketcapId: "1" },
+    },
+    {
+      label: "coinmarketcapId - null",
+      body: { ...validBody, coinmarketcapId: null },
+    },
+    {
+      label: "coinmarketcapId - ноль",
+      body: { ...validBody, coinmarketcapId: 0 },
+    },
+    {
+      label: "coinmarketcapId - отрицательный",
+      body: { ...validBody, coinmarketcapId: -1 },
+    },
+    {
+      label: "coinmarketcapId - дробный",
+      body: { ...validBody, coinmarketcapId: 1.5 },
+    },
+    {
+      label: "coinmarketcapId вне безопасного диапазона",
+      body: {
+        ...validBody,
+        coinmarketcapId: Number.MAX_SAFE_INTEGER + 1,
+      },
+    },
+    {
+      label: "пустой символ",
+      body: { ...validBody, symbol: " " },
+    },
+    {
+      label: "нет символа",
+      body: { coinmarketcapId: 1, name: "Bitcoin" },
+    },
+    {
+      label: "нет названия",
+      body: { coinmarketcapId: 1, symbol: "BTC" },
+    },
+    {
+      label: "пустое название",
+      body: { ...validBody, name: " " },
+    },
+    {
+      label: "символ - число",
+      body: { ...validBody, symbol: 123 },
+    },
+    {
+      label: "название - null",
+      body: { ...validBody, name: null },
+    },
     {
       label: "лишнее поле",
-      body: { symbol: "BTC", name: "Bitcoin", extra: true },
+      body: { ...validBody, extra: true },
     },
-    { label: "массив вместо объекта", body: [] },
+    {
+      label: "массив вместо объекта",
+      body: [],
+    },
   ])("отклоняет запрос: $label", async ({ body }) => {
     const response = await request(app)
       .post("/cryptocurrencies")
@@ -60,6 +120,7 @@ describe("POST /cryptocurrencies", () => {
       .send(body);
 
     expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
 
     const list = await request(app)
       .get("/cryptocurrencies")
@@ -69,13 +130,17 @@ describe("POST /cryptocurrencies", () => {
     expect(list.body).toEqual([]);
   });
 
-  test("не допускает повторный символ в другом регистре", async () => {
+  test("не допускает повторный coinmarketcapId", async () => {
     await createCoin(app);
 
     const response = await request(app)
       .post("/cryptocurrencies")
       .set("Authorization", `Bearer ${apiKey}`)
-      .send({ symbol: "btc", name: "Bitcoin" });
+      .send({
+        coinmarketcapId: 1,
+        symbol: "btc",
+        name: "Bitcoin",
+      });
 
     expect(response.status).toBe(409);
     expect(response.body.error.code).toBe(
@@ -99,6 +164,27 @@ describe("POST /cryptocurrencies", () => {
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe("INVALID_JSON");
   });
+
+  test("допускает одинаковый символ при разных ID CoinMarketCap", async () => {
+    const bitcoin = await createCoin(app);
+
+    const other = await createCoin(app, {
+      coinmarketcapId: 38650,
+      symbol: "BTC",
+      name: "Bitcoin Inu (tokeninu.xyz)",
+    });
+
+    expect(other.id).not.toBe(bitcoin.id);
+    expect(other.symbol).toBe(bitcoin.symbol);
+    expect(other.coinmarketcapId).not.toBe(bitcoin.coinmarketcapId);
+
+    const list = await request(app)
+      .get("/cryptocurrencies")
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(list.status).toBe(200);
+    expect(list.body).toEqual([bitcoin, other]);
+  });
 });
 
 describe("GET /cryptocurrencies", () => {
@@ -113,9 +199,10 @@ describe("GET /cryptocurrencies", () => {
 
   test("возвращает список успешно добавленных отслеживаемых криптовалют", async () => {
     const bitcoin = await createCoin(app);
-    const zefir = await createCoin(app, {
-      symbol: "zef",
-      name: "Zefir",
+    const ethereum = await createCoin(app, {
+      coinmarketcapId: 1027,
+      symbol: "ETH",
+      name: "Ethereum",
     });
 
     const response = await request(app)
@@ -123,7 +210,7 @@ describe("GET /cryptocurrencies", () => {
       .set("Authorization", `Bearer ${apiKey}`);
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual([bitcoin, zefir]);
+    expect(response.body).toEqual([bitcoin, ethereum]);
   });
 });
 
@@ -192,6 +279,10 @@ describe("PATCH /cryptocurrencies/:id", () => {
     {
       label: "лишнее поле",
       body: { name: "Bitcoin", extra: true },
+    },
+    {
+      label: "изменение coinmarketcapId",
+      body: { name: "Bitcoin", coinmarketcapId: 1027 },
     },
   ])("отклоняет запрос: $label без изменения записи", async ({ body }) => {
     const coin = await createCoin(app);
