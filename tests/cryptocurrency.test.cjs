@@ -1,0 +1,266 @@
+const request = require("supertest");
+const {
+  apiKey,
+  createTestContext,
+  createCoin,
+} = require("./helpers");
+
+let context;
+let app;
+
+beforeEach(() => {
+  context = undefined;
+  context = createTestContext();
+
+  app = context.app;
+});
+
+afterEach(() => {
+  context?.cleanup();
+});
+
+describe("POST /cryptocurrencies", () => {
+  test("создаёт монету и нормализует данные", async () => {
+    const coin = await createCoin(app, {
+      symbol: " btc ",
+      name: " Bitcoin ",
+    });
+
+    expect(coin).toEqual({
+      id: expect.any(Number),
+      symbol: "BTC",
+      name: "Bitcoin",
+      lastUpdatedAt: null,
+    });
+
+    const saved = await request(app)
+      .get(`/cryptocurrencies/${coin.id}`)
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(saved.status).toBe(200);
+    expect(saved.body).toEqual(coin);
+  });
+
+  test.each([
+    { label: "пустой символ", body: { symbol: " ", name: "Bitcoin" } },
+    { label: "нет символа", body: { name: "Bitcoin" } },
+    { label: "нет названия", body: { symbol: "BTC" } },
+    { label: "пустое название", body: { symbol: "BTC", name: " " } },
+    { label: "символ - число", body: { symbol: 123, name: "Bitcoin" } },
+    { label: "название - null", body: { symbol: "BTC", name: null } },
+    {
+      label: "лишнее поле",
+      body: { symbol: "BTC", name: "Bitcoin", extra: true },
+    },
+    { label: "массив вместо объекта", body: [] },
+  ])("отклоняет запрос: $label", async ({ body }) => {
+    const response = await request(app)
+      .post("/cryptocurrencies")
+      .set("Authorization", `Bearer ${apiKey}`)
+      .send(body);
+
+    expect(response.status).toBe(400);
+
+    const list = await request(app)
+      .get("/cryptocurrencies")
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(list.status).toBe(200);
+    expect(list.body).toEqual([]);
+  });
+
+  test("не допускает повторный символ в другом регистре", async () => {
+    await createCoin(app);
+
+    const response = await request(app)
+      .post("/cryptocurrencies")
+      .set("Authorization", `Bearer ${apiKey}`)
+      .send({ symbol: "btc", name: "Bitcoin" });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe(
+      "CRYPTOCURRENCY_ALREADY_EXISTS",
+    );
+
+    const list = await request(app)
+      .get("/cryptocurrencies")
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(list.body).toHaveLength(1);
+  });
+
+  test("отклоняет сломанный JSON", async () => {
+    const response = await request(app)
+      .post("/cryptocurrencies")
+      .set("Authorization", `Bearer ${apiKey}`)
+      .set("Content-Type", "application/json")
+      .send('{"symbol":');
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_JSON");
+  });
+});
+
+describe("GET /cryptocurrencies", () => {
+  test("возвращает пустой список если бд пустая", async () => {
+    const response = await request(app)
+      .get("/cryptocurrencies")
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([]);
+  });
+
+  test("возвращает список успешно добавленных отслеживаемых криптовалют", async () => {
+    const bitcoin = await createCoin(app);
+    const zefir = await createCoin(app, {
+      symbol: "zef",
+      name: "Zefir",
+    });
+
+    const response = await request(app)
+      .get("/cryptocurrencies")
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([bitcoin, zefir]);
+  });
+});
+
+describe("GET /cryptocurrencies/:id", () => {
+  test("возвращает существующую монету", async () => {
+    const coin = await createCoin(app);
+
+    const response = await request(app)
+      .get(`/cryptocurrencies/${coin.id}`)
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(coin);
+  });
+
+  test("возвращает 404 для отсутствующей монеты", async () => {
+    const response = await request(app)
+      .get("/cryptocurrencies/999")
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(response.status).toBe(404);
+  });
+
+  test.each(["abc", "0", "-1", "1.5"])(
+    "отклоняет некорректный id: %s",
+    async (id) => {
+      const response = await request(app)
+        .get(`/cryptocurrencies/${id}`)
+        .set("Authorization", `Bearer ${apiKey}`);
+
+      expect(response.status).toBe(400);
+    },
+  );
+});
+
+describe("PATCH /cryptocurrencies/:id", () => {
+  test("изменяет название и сохраняет остальные поля", async () => {
+    const coin = await createCoin(app);
+
+    const response = await request(app)
+      .patch(`/cryptocurrencies/${coin.id}`)
+      .set("Authorization", `Bearer ${apiKey}`)
+      .send({ name: " Bitcoin updated " });
+
+    const expected = { ...coin, name: "Bitcoin updated" };
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expected);
+
+    const saved = await request(app)
+      .get(`/cryptocurrencies/${coin.id}`)
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(saved.status).toBe(200);
+    expect(saved.body).toEqual(expected);
+  });
+
+  test.each([
+    { label: "пустое название", body: { name: " " } },
+    { label: "число вместо строки", body: { name: 123 } },
+    { label: "нет названия", body: {} },
+    {
+      label: "изменение символа",
+      body: { name: "Ethereum", symbol: "ETH" },
+    },
+    {
+      label: "лишнее поле",
+      body: { name: "Bitcoin", extra: true },
+    },
+  ])("отклоняет запрос: $label без изменения записи", async ({ body }) => {
+    const coin = await createCoin(app);
+
+    const response = await request(app)
+      .patch(`/cryptocurrencies/${coin.id}`)
+      .set("Authorization", `Bearer ${apiKey}`)
+      .send(body);
+
+    expect(response.status).toBe(400);
+
+    const saved = await request(app)
+      .get(`/cryptocurrencies/${coin.id}`)
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(saved.status).toBe(200);
+    expect(saved.body).toEqual(coin);
+  });
+
+  test("возвращает 404 для отсутствующей монеты", async () => {
+    const response = await request(app)
+      .patch("/cryptocurrencies/999")
+      .set("Authorization", `Bearer ${apiKey}`)
+      .send({ name: "Bitcoin" });
+
+    expect(response.status).toBe(404);
+  });
+
+  test("отклоняет некорректный id", async () => {
+    const response = await request(app)
+      .patch("/cryptocurrencies/abc")
+      .set("Authorization", `Bearer ${apiKey}`)
+      .send({ name: "Bitcoin" });
+
+    expect(response.status).toBe(400);
+  });
+});
+
+describe("DELETE /cryptocurrencies/:id", () => {
+  test("удаляет монету и возвращает пустой ответ", async () => {
+    const coin = await createCoin(app);
+
+    const response = await request(app)
+      .delete(`/cryptocurrencies/${coin.id}`)
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(response.status).toBe(204);
+    expect(response.text).toBe("");
+
+    const saved = await request(app)
+      .get(`/cryptocurrencies/${coin.id}`)
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(saved.status).toBe(404);
+  });
+
+  test("возвращает 404 для отсутствующей монеты", async () => {
+    const response = await request(app)
+      .delete("/cryptocurrencies/999")
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(response.status).toBe(404);
+  });
+
+  test("отклоняет некорректный id", async () => {
+    const response = await request(app)
+      .delete("/cryptocurrencies/abc")
+      .set("Authorization", `Bearer ${apiKey}`);
+
+    expect(response.status).toBe(400);
+  });
+});
