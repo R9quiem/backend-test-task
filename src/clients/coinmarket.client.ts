@@ -4,6 +4,7 @@ import { createError } from "../errors/create-error";
 export interface PriceQuote {
     coinmarketcapId: number;
     symbol: string;
+    name: string;
     price: number;
     currency: string;
     receivedAt: string;
@@ -121,6 +122,8 @@ function parseLatestPrices(
             !isObject(record) ||
             typeof record.symbol !== "string" ||
             record.symbol.trim() === "" ||
+            typeof record.name !== "string" ||
+            record.name.trim() === "" ||
             !Array.isArray(record.quote)
         ) {
             throw createError(
@@ -152,6 +155,7 @@ function parseLatestPrices(
 
         return {
             coinmarketcapId: id,
+            name: record.name,
             symbol: record.symbol,
             price: quote.price,
             currency,

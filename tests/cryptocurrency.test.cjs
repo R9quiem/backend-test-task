@@ -21,17 +21,16 @@ afterEach(() => {
 
 describe("POST /cryptocurrencies", () => {
 
-  const validBody = {
-    coinmarketcapId: 1,
-    symbol: "BTC",
-    name: "Bitcoin",
-  };
 
-  test("создаёт монету и нормализует данные", async () => {
-    const coin = await createCoin(app, {
-      symbol: " btc ",
-      name: " Bitcoin ",
-    });
+
+  test("получает название и символ из CMC", async () => {
+    const coin = await createCoin(app);
+
+    expect(context.cmcClient.getLatestPrices)
+      .toHaveBeenCalledTimes(1);
+
+    expect(context.cmcClient.getLatestPrices)
+      .toHaveBeenCalledWith([1]);
 
     expect(coin).toEqual({
       id: expect.any(Number),
@@ -49,61 +48,43 @@ describe("POST /cryptocurrencies", () => {
     expect(saved.body).toEqual(coin);
   });
 
+  const validBody = {
+    coinmarketcapId: 1,
+  };
+
   test.each([
+    { label: "нет ID", body: {} },
     {
-      label: "нет coinmarketcapId",
-      body: { symbol: "BTC", name: "Bitcoin" },
+      label: "ID - строка",
+      body: { coinmarketcapId: "1" },
     },
     {
-      label: "coinmarketcapId - строка",
-      body: { ...validBody, coinmarketcapId: "1" },
+      label: "ID - null",
+      body: { coinmarketcapId: null },
     },
     {
-      label: "coinmarketcapId - null",
-      body: { ...validBody, coinmarketcapId: null },
+      label: "ID - ноль",
+      body: { coinmarketcapId: 0 },
     },
     {
-      label: "coinmarketcapId - ноль",
-      body: { ...validBody, coinmarketcapId: 0 },
+      label: "ID - отрицательный",
+      body: { coinmarketcapId: -1 },
     },
     {
-      label: "coinmarketcapId - отрицательный",
-      body: { ...validBody, coinmarketcapId: -1 },
+      label: "ID - дробный",
+      body: { coinmarketcapId: 1.5 },
     },
     {
-      label: "coinmarketcapId - дробный",
-      body: { ...validBody, coinmarketcapId: 1.5 },
+      label: "ID вне безопасного диапазона",
+      body: { coinmarketcapId: Number.MAX_SAFE_INTEGER + 1 },
     },
     {
-      label: "coinmarketcapId вне безопасного диапазона",
-      body: {
-        ...validBody,
-        coinmarketcapId: Number.MAX_SAFE_INTEGER + 1,
-      },
+      label: "название задано вручную",
+      body: { ...validBody, name: "My Bitcoin" },
     },
     {
-      label: "пустой символ",
-      body: { ...validBody, symbol: " " },
-    },
-    {
-      label: "нет символа",
-      body: { coinmarketcapId: 1, name: "Bitcoin" },
-    },
-    {
-      label: "нет названия",
-      body: { coinmarketcapId: 1, symbol: "BTC" },
-    },
-    {
-      label: "пустое название",
-      body: { ...validBody, name: " " },
-    },
-    {
-      label: "символ - число",
-      body: { ...validBody, symbol: 123 },
-    },
-    {
-      label: "название - null",
-      body: { ...validBody, name: null },
+      label: "символ задан вручную",
+      body: { ...validBody, symbol: "BTC" },
     },
     {
       label: "лишнее поле",
@@ -122,6 +103,9 @@ describe("POST /cryptocurrencies", () => {
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
 
+    expect(context.cmcClient.getLatestPrices)
+      .not.toHaveBeenCalled();
+
     const list = await request(app)
       .get("/cryptocurrencies")
       .set("Authorization", `Bearer ${apiKey}`);
@@ -136,13 +120,11 @@ describe("POST /cryptocurrencies", () => {
     const response = await request(app)
       .post("/cryptocurrencies")
       .set("Authorization", `Bearer ${apiKey}`)
-      .send({
-        coinmarketcapId: 1,
-        symbol: "btc",
-        name: "Bitcoin",
-      });
+      .send({ coinmarketcapId: 1 });
 
     expect(response.status).toBe(409);
+    expect(context.cmcClient.getLatestPrices)
+      .toHaveBeenCalledTimes(1);
     expect(response.body.error.code).toBe(
       "CRYPTOCURRENCY_ALREADY_EXISTS",
     );
@@ -170,8 +152,6 @@ describe("POST /cryptocurrencies", () => {
 
     const other = await createCoin(app, {
       coinmarketcapId: 38650,
-      symbol: "BTC",
-      name: "Bitcoin Inu (tokeninu.xyz)",
     });
 
     expect(other.id).not.toBe(bitcoin.id);
@@ -199,10 +179,9 @@ describe("GET /cryptocurrencies", () => {
 
   test("возвращает список успешно добавленных отслеживаемых криптовалют", async () => {
     const bitcoin = await createCoin(app);
+
     const ethereum = await createCoin(app, {
       coinmarketcapId: 1027,
-      symbol: "ETH",
-      name: "Ethereum",
     });
 
     const response = await request(app)

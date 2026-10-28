@@ -28,14 +28,10 @@ export function createCryptocurrencyController(
             res.status(200).json(cryptocurrency);
         },
 
-        create(req: Request, res: Response): void {
-            const { coinmarketcapId, symbol, name } = req.body;
+        async create(req: Request, res: Response): Promise<void> {
+            const { coinmarketcapId } = req.body;
 
-            const cryptocurrency = service.create(
-                coinmarketcapId,
-                symbol,
-                name,
-            );
+            const cryptocurrency = await service.create(coinmarketcapId);
 
             res.status(201).json(cryptocurrency);
         },

@@ -25,6 +25,29 @@ export const errorHandler: ErrorRequestHandler = (
             return;
         }
 
+        if ("code" in error && typeof error.code === "string") {
+            const statuses = new Map([
+                ["CMC_TIMEOUT", 504],
+                ["CMC_UNAVAILABLE", 503],
+                ["CMC_RATE_LIMIT", 503],
+                ["CMC_ACCESS_DENIED", 502],
+                ["CMC_REQUEST_FAILED", 502],
+                ["CMC_INVALID_RESPONSE", 502],
+            ]);
+
+            const status = statuses.get(error.code);
+
+            if (status !== undefined) {
+                res.status(status).json({
+                    error: {
+                        code: error.code,
+                        message: error.message,
+                    },
+                });
+                return;
+            }
+        }
+
         if ("type" in error) {
             switch (error.type) {
                 case "entity.parse.failed":
@@ -47,6 +70,7 @@ export const errorHandler: ErrorRequestHandler = (
                     return;
             }
         }
+
     }
 
     console.error(error);

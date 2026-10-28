@@ -2,10 +2,20 @@ import type {
     CryptocurrencyRepository,
 } from "../repositories/cryptocurrency.repository";
 import {createError} from "../errors/create-error";
+import {CoinMarketCapClient} from "../clients/coinmarket.client";
 
 export function createCryptocurrencyService(
     repository: CryptocurrencyRepository,
+    cmcClient: CoinMarketCapClient,
 ) {
+    function checkNotTracked(coinmarketcapId: number): void {
+        if (repository.findByCoinmarketcapId(coinmarketcapId)) {
+            throw createError(
+                "CRYPTOCURRENCY_ALREADY_EXISTS",
+                "Криптовалюта уже отслеживается",
+            );
+        }
+    }
     return {
         findAll() {
             return repository.findAll();
@@ -15,25 +25,29 @@ export function createCryptocurrencyService(
             return repository.findById(id);
         },
 
-        create(
-            coinmarketcapId: number,
-            symbol: string,
-            name: string,
-        ) {
-            const normalizedSymbol = symbol.trim().toUpperCase();
-            const normalizedName = name.trim();
+        async create(coinmarketcapId: number) {
+            checkNotTracked(coinmarketcapId);
 
-            if (repository.findByCoinmarketcapId(coinmarketcapId)) {
+            const prices = await cmcClient.getLatestPrices([coinmarketcapId]);
+
+            const coin = prices.find(
+                (price) => price.coinmarketcapId === coinmarketcapId,
+            );
+
+            if (!coin) {
                 throw createError(
-                    "CRYPTOCURRENCY_ALREADY_EXISTS",
-                    "Криптовалюта уже отслеживается",
+                    "CMC_INVALID_RESPONSE",
+                    "CoinMarketCap не вернул данные запрошенной монеты",
                 );
             }
 
+            // Пока ожидали ответ от cmc, другой запрос мог создать эту монету.
+            checkNotTracked(coinmarketcapId);
+
             return repository.create(
                 coinmarketcapId,
-                normalizedSymbol,
-                normalizedName,
+                coin.symbol,
+                coin.name,
             );
         },
 

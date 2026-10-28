@@ -47,15 +47,13 @@ export const validateCreate: RequestHandler = (req, res, next) => {
         typeof body.coinmarketcapId !== "number" ||
         !Number.isSafeInteger(body.coinmarketcapId) ||
         body.coinmarketcapId <= 0 ||
-        !isNonEmptyString(body.symbol) ||
-        !isNonEmptyString(body.name) ||
-        !hasOnlyFields(body, ["coinmarketcapId", "symbol", "name"])
+        !hasOnlyFields(body, ["coinmarketcapId"])
     ) {
         res.status(400).json({
             error: {
                 code: "VALIDATION_ERROR",
                 message:
-                    "Нужно передать положительный целочисленный coinmarketcapId и непустые строки symbol и name",
+                    "Нужно передать только положительный целочисленный coinmarketcapId",
             },
         });
         return;

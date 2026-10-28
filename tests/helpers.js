@@ -8,6 +8,51 @@ const { openDatabase } = require("../dist/db/database");
 
 const apiKey = "test-api-key";
 
+const cmcCoins = [
+  {
+    coinmarketcapId: 1,
+    symbol: "BTC",
+    name: "Bitcoin",
+  },
+  {
+    coinmarketcapId: 1027,
+    symbol: "ETH",
+    name: "Ethereum",
+  },
+  {
+    coinmarketcapId: 38650,
+    symbol: "BTC",
+    name: "Bitcoin Inu (tokeninu.xyz)",
+  },
+];
+
+function createMockCmcClient() {
+  return {
+    getLatestPrices: jest.fn(async (ids) => {
+      return ids.map((id) => {
+        const coin = cmcCoins.find(
+          (item) => item.coinmarketcapId === id,
+        );
+
+        if (!coin) {
+          throw Object.assign(
+            new Error("Нет данных запрошенной монеты"),
+            { code: "CMC_INVALID_RESPONSE" },
+          );
+        }
+
+        return {
+          ...coin,
+          price: 100,
+          currency: "USD",
+          receivedAt: "2026-10-27T12:00:00.000Z",
+        };
+      });
+    }),
+  };
+}
+
+
 function createTestContext() {
   const directory = mkdtempSync(join(tmpdir(), "crypto-test-"));
 
@@ -15,11 +60,13 @@ function createTestContext() {
 
   try {
     db = openDatabase(join(directory, "test.sqlite"));
-    const app = createApp(apiKey, db);
+    const cmcClient = createMockCmcClient();
+    const app = createApp(apiKey, db, cmcClient);
 
     return {
       app,
       db,
+      cmcClient,
 
       cleanup() {
         try {
@@ -50,8 +97,6 @@ async function createCoin(app, data = {}) {
     .set("Authorization", `Bearer ${apiKey}`)
     .send({
       coinmarketcapId: 1,
-      symbol: "BTC",
-      name: "Bitcoin",
       ...data,
     })
     .expect(201);
