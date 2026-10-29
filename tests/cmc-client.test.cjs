@@ -1,204 +1,223 @@
-const { createTestContext } = require("./helpers");
+const axios = require("axios");
 
 const {
-  createCryptocurrencyRepository,
-} = require("../dist/repositories/cryptocurrency.repository");
+  createCoinMarketCapClient,
+} = require("../dist/clients/coinmarket.client");
 
-const {
-  createPriceRepository,
-} = require("../dist/repositories/price.repository");
-
-const {
-  createPriceService,
-} = require("../dist/services/price.service");
-
-let context;
-let cryptocurrencyRepository;
-let priceRepository;
-let service;
+let client;
+let get;
 
 beforeEach(() => {
-  context = undefined;
-  context = createTestContext();
+  get = jest.fn();
 
-  cryptocurrencyRepository = createCryptocurrencyRepository(context.db);
-  priceRepository = createPriceRepository(context.db);
+  jest.spyOn(axios, "create").mockReturnValue({ get });
 
-  service = createPriceService(
-    cryptocurrencyRepository,
-    priceRepository,
-    context.cmcClient,
+  client = createCoinMarketCapClient(
+    "test-cmc-key",
+    "USD",
+    5000,
   );
 });
 
 afterEach(() => {
-  context?.cleanup();
+  jest.restoreAllMocks();
 });
 
-function readHistory() {
-  return context.db.prepare(`
-    SELECT
-      cryptocurrency_id AS cryptocurrencyId,
-      price,
-      received_at AS receivedAt
-    FROM price_history
-    ORDER BY cryptocurrency_id, received_at
-  `).all();
+function makeBody(quoteOverrides = {}, coinOverrides = {}) {
+  return {
+    status: {
+      error_code: "0",
+    },
+    data: [
+      {
+        id: 1,
+        symbol: "BTC",
+        name: "Bitcoin",
+        quote: [
+          {
+            symbol: "USD",
+            price: 80000,
+            ...quoteOverrides,
+          },
+        ],
+        ...coinOverrides,
+      },
+    ],
+  };
 }
 
-describe("Синхронизация цен", () => {
-  test("сопоставляет CMC ID с внутренними ID и сохраняет цены", async () => {
-    const ethereum = cryptocurrencyRepository.create(
-      1027,
-      "ETH",
-      "Ethereum",
+describe("Запрос цен CoinMarketCap", () => {
+  test("передаёт ключ и таймаут в настройки axios", () => {
+    expect(axios.create).toHaveBeenCalledWith({
+      baseURL: "https://pro-api.coinmarketcap.com",
+      timeout: 5000,
+      maxRedirects: 0,
+      headers: {
+        "X-CMC_PRO_API_KEY": "test-cmc-key",
+        Accept: "application/json",
+      },
+    });
+  });
+
+  test("отправляет правильные параметры и разбирает ответ", async () => {
+    get.mockResolvedValueOnce({
+      data: makeBody(),
+    });
+
+    const result = await client.getLatestPrices([1]);
+
+    expect(get).toHaveBeenCalledTimes(1);
+
+    expect(get).toHaveBeenCalledWith(
+      "/v3/cryptocurrency/quotes/latest",
+      {
+        params: {
+          id: "1",
+          convert: "USD",
+        },
+      },
     );
 
-    const bitcoin = cryptocurrencyRepository.create(
-      1,
-      "BTC",
-      "Bitcoin",
-    );
-
-    const receivedAt = "2026-10-28T12:00:00.000Z";
-
-    // Порядок ответа отличается от порядка записей в БД.
-    context.cmcClient.getLatestPrices.mockResolvedValueOnce([
+    expect(result).toEqual([
       {
         coinmarketcapId: 1,
         symbol: "BTC",
         name: "Bitcoin",
         price: 80000,
         currency: "USD",
-        receivedAt,
-      },
-      {
-        coinmarketcapId: 1027,
-        symbol: "ETH",
-        name: "Ethereum",
-        price: 2300,
-        currency: "USD",
-        receivedAt,
-      },
-    ]);
-
-    const savedCount = await service.syncPrices();
-
-    expect(savedCount).toBe(2);
-
-    expect(context.cmcClient.getLatestPrices)
-      .toHaveBeenCalledTimes(1);
-
-    expect(context.cmcClient.getLatestPrices)
-      .toHaveBeenCalledWith([1027, 1]);
-
-    expect(readHistory()).toEqual([
-      {
-        cryptocurrencyId: ethereum.id,
-        price: 2300,
-        receivedAt,
-      },
-      {
-        cryptocurrencyId: bitcoin.id,
-        price: 80000,
-        receivedAt,
+        receivedAt: expect.any(String),
       },
     ]);
 
     expect(
-      cryptocurrencyRepository.findById(ethereum.id).lastUpdatedAt,
-    ).toBe(receivedAt);
-
-    expect(
-      cryptocurrencyRepository.findById(bitcoin.id).lastUpdatedAt,
-    ).toBe(receivedAt);
+      Number.isFinite(Date.parse(result[0].receivedAt)),
+    ).toBe(true);
   });
 
-  test("не обращается к CMC при пустом списке монет", async () => {
-    const savedCount = await service.syncPrices();
+  test("не выполняет запрос при пустом списке", async () => {
+    await expect(client.getLatestPrices([])).resolves.toEqual([]);
 
-    expect(savedCount).toBe(0);
-    expect(context.cmcClient.getLatestPrices).not.toHaveBeenCalled();
-    expect(readHistory()).toEqual([]);
-  });
-
-  test("не меняет БД при ошибке CMC", async () => {
-    const coin = cryptocurrencyRepository.create(
-      1,
-      "BTC",
-      "Bitcoin",
-    );
-
-    const previousTime = "2026-10-28T11:00:00.000Z";
-
-    priceRepository.saveMany([
-      {
-        cryptocurrencyId: coin.id,
-        price: 79000,
-        receivedAt: previousTime,
-      },
-    ]);
-
-    const previousHistory = readHistory();
-
-    const error = Object.assign(
-      new Error("CoinMarketCap не ответил вовремя"),
-      { code: "CMC_TIMEOUT" },
-    );
-
-    context.cmcClient.getLatestPrices.mockRejectedValueOnce(error);
-
-    await expect(service.syncPrices()).rejects.toMatchObject({
-      code: "CMC_TIMEOUT",
-    });
-
-    expect(readHistory()).toEqual(previousHistory);
-
-    expect(
-      cryptocurrencyRepository.findById(coin.id).lastUpdatedAt,
-    ).toBe(previousTime);
+    expect(get).not.toHaveBeenCalled();
   });
 });
 
-describe("Транзакция сохранения цен", () => {
-  test("откатывает весь пакет и время обновления при ошибке", () => {
-    const bitcoin = cryptocurrencyRepository.create(
-      1,
-      "BTC",
-      "Bitcoin",
+describe("Сетевые ошибки CoinMarketCap", () => {
+  test.each([
+    ["ECONNABORTED", "CMC_TIMEOUT"],
+    ["ETIMEDOUT", "CMC_TIMEOUT"],
+    ["ERR_NETWORK", "CMC_UNAVAILABLE"],
+    ["ECONNRESET", "CMC_UNAVAILABLE"],
+    ["ENOTFOUND", "CMC_UNAVAILABLE"],
+  ])("преобразует %s в %s", async (axiosCode, expectedCode) => {
+    get.mockRejectedValueOnce(
+      new axios.AxiosError("Ошибка запроса", axiosCode),
     );
 
-    const ethereum = cryptocurrencyRepository.create(
-      1027,
-      "ETH",
-      "Ethereum",
+    await expect(client.getLatestPrices([1]))
+      .rejects.toMatchObject({
+        code: expectedCode,
+      });
+  });
+});
+
+describe("HTTP-ошибки CoinMarketCap", () => {
+  test.each([
+    [401, "CMC_ACCESS_DENIED"],
+    [403, "CMC_ACCESS_DENIED"],
+    [429, "CMC_RATE_LIMIT"],
+    [500, "CMC_UNAVAILABLE"],
+    [503, "CMC_UNAVAILABLE"],
+    [400, "CMC_REQUEST_FAILED"],
+  ])("преобразует HTTP %s в %s", async (status, expectedCode) => {
+    const error = new axios.AxiosError(
+      "Ошибка ответа",
+      "ERR_BAD_RESPONSE",
     );
 
-    const receivedAt = "2026-10-28T12:00:00.000Z";
+    error.response = {
+      status,
+      statusText: "Error",
+      data: {},
+      headers: {},
+      config: {},
+    };
 
-    expect(() => {
-      priceRepository.saveMany([
-        {
-          cryptocurrencyId: bitcoin.id,
-          price: 80000,
-          receivedAt,
-        },
-        {
-          cryptocurrencyId: ethereum.id,
-          price: -1,
-          receivedAt,
-        },
-      ]);
-    }).toThrow();
+    get.mockRejectedValueOnce(error);
 
-    expect(readHistory()).toEqual([]);
+    await expect(client.getLatestPrices([1]))
+      .rejects.toMatchObject({
+        code: expectedCode,
+      });
+  });
+});
 
-    expect(
-      cryptocurrencyRepository.findById(bitcoin.id).lastUpdatedAt,
-    ).toBeNull();
+describe("Проверка ответа CoinMarketCap", () => {
+  test.each([
+    {
+      label: "ответ отсутствует",
+      body: undefined,
+    },
+    {
+      label: "нет обязательных полей",
+      body: {},
+    },
+    {
+      label: "нет запрошенной монеты",
+      body: {
+        status: { error_code: 0 },
+        data: [],
+      },
+    },
+    {
+      label: "пустое название",
+      body: makeBody({}, { name: "" }),
+    },
+    {
+      label: "пустой символ",
+      body: makeBody({}, { symbol: "" }),
+    },
+    {
+      label: "нет цены",
+      body: makeBody({ price: undefined }),
+    },
+    {
+      label: "цена - строка",
+      body: makeBody({ price: "80000" }),
+    },
+    {
+      label: "отрицательная цена",
+      body: makeBody({ price: -1 }),
+    },
+    {
+      label: "цена - NaN",
+      body: makeBody({ price: NaN }),
+    },
+    {
+      label: "цена - Infinity",
+      body: makeBody({ price: Infinity }),
+    },
+    {
+      label: "нет котировки в нужной валюте",
+      body: makeBody({ symbol: "EUR" }),
+    },
+  ])("отклоняет ответ: $label", async ({ body }) => {
+    get.mockResolvedValueOnce({ data: body });
 
-    expect(
-      cryptocurrencyRepository.findById(ethereum.id).lastUpdatedAt,
-    ).toBeNull();
+    await expect(client.getLatestPrices([1]))
+      .rejects.toMatchObject({
+        code: "CMC_INVALID_RESPONSE",
+      });
+  });
+
+  test("обрабатывает ошибку в теле успешного HTTP-ответа", async () => {
+    const body = makeBody();
+    body.status.error_code = "1001";
+
+    get.mockResolvedValueOnce({ data: body });
+
+    await expect(client.getLatestPrices([1]))
+      .rejects.toMatchObject({
+        code: "CMC_REQUEST_FAILED",
+      });
   });
 });
