@@ -1,0 +1,323 @@
+openapi: 3.0.3
+
+info:
+  title: Cryptocurrency Tracker API
+  version: 1.0.0
+  description: >
+    Управление отслеживаемыми криптовалютами и получение сохранённых цен и их истории. 
+    Валюта цен определяется параметром QUOTE_CURRENCY (по умолчанию USD). 
+    Название и символ криптовалюты определяются автоматически по данным CoinMarketCap при создании записи.
+
+servers:
+  - url: http://localhost:3000
+
+security:
+  - BearerAuth: []
+
+paths:
+  /cryptocurrencies:
+    get:
+      summary: Получить список отслеживаемых монет
+      responses:
+        "200":
+          description: Список монет, либо пустой массив
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Cryptocurrency"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    post:
+      summary: Добавить монету по ID CoinMarketCap
+      description: >
+        Название и символ получаются из api CMC.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [coinmarketcapId]
+              properties:
+                coinmarketcapId:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+                  example: 1
+      responses:
+        "201":
+          description: Монета добавлена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cryptocurrency"
+        "400":
+          description: Некорректное тело запроса или JSON
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Этот ID CoinMarketCap уже отслеживается
+        "413":
+          description: Слишком большое тело запроса
+        "415":
+          description: Неподдерживаемая кодировка тела запроса
+        "502":
+          description: Ошибка доступа к CMC, отклонённый запрос или некорректный ответ CMC
+        "503":
+          description: CMC недоступен или превышен его лимит запросов
+        "504":
+          description: Таймаут CMC
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /cryptocurrencies/{id}:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+
+    get:
+      summary: Получить одну отслеживаемую монету
+      responses:
+        "200":
+          description: Запись монеты
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cryptocurrency"
+        "400":
+          description: Некорректный id
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Монета не найдена
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    patch:
+      summary: Изменить название монеты
+      description: Остальные поля изменять запрещено
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  description: Пробелы по краям удаляются; строка из пробелов запрещена
+                  example: Bitcoin
+      responses:
+        "200":
+          description: Обновлённая запись
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cryptocurrency"
+        "400":
+          description: Некорректный id, тело запроса или JSON
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Монета не найдена
+        "413":
+          description: Слишком большое тело запроса
+        "415":
+          description: Неподдерживаемая кодировка тела запроса
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+    delete:
+      summary: Удалить монету вместе с историей цен
+      responses:
+        "204":
+          description: Запись удалена, тело ответа отсутствует
+        "400":
+          description: Некорректный id
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Монета не найдена
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /cryptocurrencies/{id}/price:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+
+    get:
+      summary: Получить последнюю сохранённую цену
+      description: Читает БД без запроса к CMC; время измерения указано в receivedAt
+      responses:
+        "200":
+          description: Последнее измерение
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PriceRecord"
+        "400":
+          description: Некорректный id
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: >
+            CRYPTOCURRENCY_NOT_FOUND - монета не найдена;
+            PRICE_NOT_AVAILABLE - измерений пока нет
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /cryptocurrencies/{id}/history:
+    parameters:
+      - $ref: "#/components/parameters/Id"
+
+    get:
+      summary: Получить историю цен
+      description: >
+        Записи от новых к старым. Без измерений возвращается пустой массив.
+        Разрешены query-параметры limit и offset.
+      parameters:
+        - name: limit
+          in: query
+          description: Максимальное количество записей
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: offset
+          in: query
+          description: Количество пропускаемых записей
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+            default: 0
+      responses:
+        "200":
+          description: История измерений
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PriceRecord"
+        "400":
+          description: Некорректный id или параметры пагинации
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Монета не найдена
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Значение API_KEY, не ключ CoinMarketCap
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      description: Внутренний ID записи в БД, не ID CoinMarketCap
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 9007199254740991
+      example: 7
+
+  schemas:
+    Cryptocurrency:
+      type: object
+      required: [id, coinmarketcapId, symbol, name, lastUpdatedAt]
+      properties:
+        id:
+          type: integer
+          example: 7
+        coinmarketcapId:
+          type: integer
+          example: 1
+        symbol:
+          type: string
+          example: BTC
+        name:
+          type: string
+          example: Bitcoin
+        lastUpdatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Время последнего сохранённого измерения; до первого обновления null
+
+    PriceRecord:
+      type: object
+      required: [cryptocurrencyId, price, receivedAt]
+      properties:
+        cryptocurrencyId:
+          type: integer
+          description: Внутренний ID монеты
+          example: 7
+        price:
+          type: number
+          minimum: 0
+          description: Цена в валюте QUOTE_CURRENCY
+          example: 80140.13
+        receivedAt:
+          type: string
+          format: date-time
+          description: Время получения измерения сервисом в UTC
+          example: "2026-10-29T12:00:00.000Z"
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Некорректный id
+
+  responses:
+    Unauthorized:
+      description: Отсутствующий или неверный Bearer token
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            example: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: UNAUTHORIZED
+              message: Отсутствующий или неверный токен доступа
+
+    InternalError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error:
+              code: INTERNAL_ERROR
+              message: Внутренняя ошибка сервера
