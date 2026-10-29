@@ -38,12 +38,54 @@ npm start
 
 Запуск для разработки:
 
+Сначала соберите приложение:
+
+```powershell
+npm run build
+```
+
+Затем запустите два терминала в корне проекта.
+
+В первом - компиляцию TypeScript при изменениях:
+
+```powershell
+npm run watch
+```
+
+Во втором - сервер с автоматическим перезапуском:
+
 ```powershell
 npm run dev
 ```
-
 API будет доступен по адресу `http://localhost:3000`.
 Файл БД и таблицы создаются автоматически.
+
+## Запуск через Docker Compose
+
+Создайте `.env` на основе `.env.example` и заполните ключи.
+
+```powershell
+docker compose up --build -d
+```
+
+API доступен по адресу `http://localhost:3000`
+либо на порту, заданном в `PORT`.
+
+Просмотр логов:
+
+```powershell
+docker compose logs -f api
+```
+
+Остановка:
+
+```powershell
+docker compose down
+```
+
+SQLite хранится в volume `sqlite-data` и сохраняется
+при пересоздании контейнера. Команда `docker compose down -v`
+удаляет volume вместе с данными.
 
 ## Настройки
 

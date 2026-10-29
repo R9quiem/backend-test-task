@@ -1,0 +1,26 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    init: true
+
+    env_file:
+      - .env
+
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_PATH: /app/data/app.sqlite
+
+    ports:
+      - "127.0.0.1:${PORT:-3000}:3000"
+
+    volumes:
+      - sqlite-data:/app/data
+
+    stop_grace_period: 30s
+
+volumes:
+  sqlite-data:
