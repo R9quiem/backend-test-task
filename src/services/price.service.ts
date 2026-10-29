@@ -64,6 +64,48 @@ export function createPriceService(
 
             return priceRepository.saveMany(records);
         },
+        findLatest(cryptocurrencyId: number) {
+            const coin = cryptocurrencyRepository.findById(cryptocurrencyId);
+
+            if (!coin) {
+                throw createError(
+                    "CRYPTOCURRENCY_NOT_FOUND",
+                    "Криптовалюта не найдена",
+                );
+            }
+
+            const price = priceRepository.findLatest(cryptocurrencyId);
+
+            if (!price) {
+                throw createError(
+                    "PRICE_NOT_AVAILABLE",
+                    "Цена криптовалюты ещё не получена",
+                );
+            }
+
+            return price;
+        },
+
+        findHistory(
+            cryptocurrencyId: number,
+            limit: number,
+            offset: number,
+        ) {
+            const coin = cryptocurrencyRepository.findById(cryptocurrencyId);
+
+            if (!coin) {
+                throw createError(
+                    "CRYPTOCURRENCY_NOT_FOUND",
+                    "Криптовалюта не найдена",
+                );
+            }
+
+            return priceRepository.findHistory(
+                cryptocurrencyId,
+                limit,
+                offset,
+            );
+        },
     };
 }
 

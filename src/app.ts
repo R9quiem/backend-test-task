@@ -7,6 +7,10 @@ import {createCryptocurrencyController} from "./controllers/cryptocurrency.contr
 import {createCryptocurrencyRouter} from "./routes/cryptocurrency.routes";
 import {errorHandler} from "./middleware/error-handler";
 import {CoinMarketCapClient} from "./clients/coinmarket.client";
+import {createPriceRepository} from "./repositories/price.repository";
+import {createPriceService} from "./services/price.service";
+import {createPriceController} from "./controllers/price.controller";
+import {createPriceRouter} from "./routes/price.routes";
 
 export function createApp(
     apiKey: string | undefined,
@@ -30,7 +34,20 @@ export function createApp(
     const controller = createCryptocurrencyController(service);
     const router = createCryptocurrencyRouter(controller);
 
+    const priceRepository = createPriceRepository(db);
+
+    const priceService = createPriceService(
+        repository,
+        priceRepository,
+        cmcClient,
+    );
+
+    const priceController = createPriceController(priceService);
+    const priceRouter = createPriceRouter(priceController);
+
     app.use("/cryptocurrencies", router);
+    app.use("/cryptocurrencies", priceRouter);
+
     app.use(errorHandler);
 
     return app;

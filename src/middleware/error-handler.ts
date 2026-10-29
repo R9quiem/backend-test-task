@@ -70,6 +70,21 @@ export const errorHandler: ErrorRequestHandler = (
                     return;
             }
         }
+        if (
+            "code" in error &&
+            (
+                error.code === "CRYPTOCURRENCY_NOT_FOUND" ||
+                error.code === "PRICE_NOT_AVAILABLE"
+            )
+        ) {
+            res.status(404).json({
+                error: {
+                    code: error.code,
+                    message: error.message,
+                },
+            });
+            return;
+        }
 
     }
 
