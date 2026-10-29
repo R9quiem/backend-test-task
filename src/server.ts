@@ -23,13 +23,18 @@ if (
     throw new Error("Некорректный SYNC_INTERVAL_MS");
 }
 
+const currency = (
+    process.env.QUOTE_CURRENCY ?? "USD"
+).trim().toUpperCase();
+
 const cmcClient = createCoinMarketCapClient(
     cmcApiKey,
-    process.env.QUOTE_CURRENCY ?? "USD",
+    currency,
 );
 
 const db = openDatabase(
-    process.env.DATABASE_PATH ?? "./data/app.sqlite"
+    process.env.DATABASE_PATH ?? "./data/app.sqlite",
+    currency
 );
 
 const cryptocurrencyRepository = createCryptocurrencyRepository(db);
