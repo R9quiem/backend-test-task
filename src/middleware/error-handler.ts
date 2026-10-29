@@ -68,6 +68,15 @@ export const errorHandler: ErrorRequestHandler = (
                         },
                     });
                     return;
+
+            case "entity.too.large":
+                res.status(413).json({
+                    error: {
+                        code: "PAYLOAD_TOO_LARGE",
+                        message: "Превышен допустимый размер тела запроса",
+                    },
+                });
+                return;
             }
         }
         if (
@@ -85,6 +94,7 @@ export const errorHandler: ErrorRequestHandler = (
             });
             return;
         }
+
 
     }
 
