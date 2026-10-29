@@ -25,6 +25,8 @@ describe("отклоняет запрос без токена", () => {
     ["post", "/cryptocurrencies"],
     ["patch", "/cryptocurrencies/1"],
     ["delete", "/cryptocurrencies/1"],
+    ["get", "/cryptocurrencies/1/price"],
+    ["get", "/cryptocurrencies/1/history"],
   ])("%s %s требует токен", async (method, path) => {
     const response = await request(app)[method](path);
 
@@ -40,6 +42,8 @@ describe("отклоняет запрос c неверным токеном", ()
     ["post", "/cryptocurrencies"],
     ["patch", "/cryptocurrencies/1"],
     ["delete", "/cryptocurrencies/1"],
+    ["get", "/cryptocurrencies/1/price"],
+    ["get", "/cryptocurrencies/1/history"],
   ])("%s %s требует токен", async (method, path) => {
     const response = await request(app)[method](path)
       .set("Authorization", `Bearer ${apiKey}f`);

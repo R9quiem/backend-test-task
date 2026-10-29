@@ -1,4 +1,5 @@
-const { createTestContext } = require("./helpers");
+const request = require("supertest");
+const { apiKey, createTestContext } = require("./helpers");
 
 const {
   createCryptocurrencyRepository,
@@ -8,14 +9,11 @@ const {
   createPriceRepository,
 } = require("../dist/repositories/price.repository");
 
-const {
-  createPriceService,
-} = require("../dist/services/price.service");
-
 let context;
 let cryptocurrencyRepository;
 let priceRepository;
-let service;
+let bitcoin;
+let ethereum;
 
 beforeEach(() => {
   context = undefined;
@@ -24,181 +22,245 @@ beforeEach(() => {
   cryptocurrencyRepository = createCryptocurrencyRepository(context.db);
   priceRepository = createPriceRepository(context.db);
 
-  service = createPriceService(
-    cryptocurrencyRepository,
-    priceRepository,
-    context.cmcClient,
-  );
+  // Подготовка данных без обращения к CMC.
+  bitcoin = cryptocurrencyRepository.create(1, "BTC", "Bitcoin");
+  ethereum = cryptocurrencyRepository.create(1027, "ETH", "Ethereum");
 });
 
 afterEach(() => {
   context?.cleanup();
 });
 
-function readHistory() {
-  return context.db.prepare(`
-    SELECT
-      cryptocurrency_id AS cryptocurrencyId,
-      price,
-      received_at AS receivedAt
-    FROM price_history
-    ORDER BY cryptocurrency_id, received_at
-  `).all();
+function get(path) {
+  return request(context.app)
+    .get(path)
+    .set("Authorization", `Bearer ${apiKey}`);
 }
 
-describe("Синхронизация цен", () => {
-  test("сопоставляет CMC ID с внутренними ID и сохраняет цены", async () => {
-    const ethereum = cryptocurrencyRepository.create(
-      1027,
-      "ETH",
-      "Ethereum",
-    );
+function makeHistory(cryptocurrencyId, count) {
+  return Array.from({ length: count }, (_, index) => ({
+    cryptocurrencyId,
+    price: 100 + index,
+    receivedAt: new Date(
+      Date.UTC(2026, 9, 29, 12, index),
+    ).toISOString(),
+  }));
+}
 
-    const bitcoin = cryptocurrencyRepository.create(
-      1,
-      "BTC",
-      "Bitcoin",
-    );
+describe("GET /cryptocurrencies/:id/price", () => {
+  test("возвращает последнее измерение только выбранной монеты", async () => {
+    const records = makeHistory(bitcoin.id, 3);
+    const otherRecords = makeHistory(ethereum.id, 5);
 
-    const receivedAt = "2026-10-28T12:00:00.000Z";
-
-    // Порядок ответа отличается от порядка записей в БД.
-    context.cmcClient.getLatestPrices.mockResolvedValueOnce([
-      {
-        coinmarketcapId: 1,
-        symbol: "BTC",
-        name: "Bitcoin",
-        price: 80000,
-        currency: "USD",
-        receivedAt,
-      },
-      {
-        coinmarketcapId: 1027,
-        symbol: "ETH",
-        name: "Ethereum",
-        price: 2300,
-        currency: "USD",
-        receivedAt,
-      },
-    ]);
-
-    const savedCount = await service.syncPrices();
-
-    expect(savedCount).toBe(2);
-
-    expect(context.cmcClient.getLatestPrices)
-      .toHaveBeenCalledTimes(1);
-
-    expect(context.cmcClient.getLatestPrices)
-      .toHaveBeenCalledWith([1027, 1]);
-
-    expect(readHistory()).toEqual([
-      {
-        cryptocurrencyId: ethereum.id,
-        price: 2300,
-        receivedAt,
-      },
-      {
-        cryptocurrencyId: bitcoin.id,
-        price: 80000,
-        receivedAt,
-      },
-    ]);
-
-    expect(
-      cryptocurrencyRepository.findById(ethereum.id).lastUpdatedAt,
-    ).toBe(receivedAt);
-
-    expect(
-      cryptocurrencyRepository.findById(bitcoin.id).lastUpdatedAt,
-    ).toBe(receivedAt);
-  });
-
-  test("не обращается к CMC при пустом списке монет", async () => {
-    const savedCount = await service.syncPrices();
-
-    expect(savedCount).toBe(0);
-    expect(context.cmcClient.getLatestPrices).not.toHaveBeenCalled();
-    expect(readHistory()).toEqual([]);
-  });
-
-  test("не меняет БД при ошибке CMC", async () => {
-    const coin = cryptocurrencyRepository.create(
-      1,
-      "BTC",
-      "Bitcoin",
-    );
-
-    const previousTime = "2026-10-28T11:00:00.000Z";
-
+    // Последнее по времени измерение вставляем не последним.
     priceRepository.saveMany([
-      {
-        cryptocurrencyId: coin.id,
-        price: 79000,
-        receivedAt: previousTime,
-      },
+      records[1],
+      records[2],
+      records[0],
+      ...otherRecords,
     ]);
 
-    const previousHistory = readHistory();
-
-    const error = Object.assign(
-      new Error("CoinMarketCap не ответил вовремя"),
-      { code: "CMC_TIMEOUT" },
+    const response = await get(
+      `/cryptocurrencies/${bitcoin.id}/price`,
     );
 
-    context.cmcClient.getLatestPrices.mockRejectedValueOnce(error);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(records[2]);
+  });
 
-    await expect(service.syncPrices()).rejects.toMatchObject({
-      code: "CMC_TIMEOUT",
-    });
+  test("возвращает PRICE_NOT_AVAILABLE при отсутствии измерений", async () => {
+    const response = await get(
+      `/cryptocurrencies/${bitcoin.id}/price`,
+    );
 
-    expect(readHistory()).toEqual(previousHistory);
-
-    expect(
-      cryptocurrencyRepository.findById(coin.id).lastUpdatedAt,
-    ).toBe(previousTime);
+    expect(response.status).toBe(404);
+    expect(response.body.error.code).toBe("PRICE_NOT_AVAILABLE");
   });
 });
 
-describe("Транзакция сохранения цен", () => {
-  test("откатывает весь пакет и время обновления при ошибке", () => {
-    const bitcoin = cryptocurrencyRepository.create(
-      1,
-      "BTC",
-      "Bitcoin",
+describe("GET /cryptocurrencies/:id/history", () => {
+  test("возвращает только историю выбранной монеты от новых к старым", async () => {
+    const records = makeHistory(bitcoin.id, 3);
+
+    priceRepository.saveMany([
+      records[1],
+      records[2],
+      records[0],
+      ...makeHistory(ethereum.id, 5),
+    ]);
+
+    const response = await get(
+      `/cryptocurrencies/${bitcoin.id}/history`,
     );
 
-    const ethereum = cryptocurrencyRepository.create(
-      1027,
-      "ETH",
-      "Ethereum",
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([
+      records[2],
+      records[1],
+      records[0],
+    ]);
+  });
+
+  test("возвращает пустой массив, если измерений нет", async () => {
+    const response = await get(
+      `/cryptocurrencies/${bitcoin.id}/history`,
     );
 
-    const receivedAt = "2026-10-28T12:00:00.000Z";
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([]);
+  });
 
-    expect(() => {
-      priceRepository.saveMany([
-        {
-          cryptocurrencyId: bitcoin.id,
-          price: 80000,
-          receivedAt,
-        },
-        {
-          cryptocurrencyId: ethereum.id,
-          price: -1,
-          receivedAt,
-        },
-      ]);
-    }).toThrow();
+  test("по умолчанию возвращает первые 20 измерений", async () => {
+    const records = makeHistory(bitcoin.id, 25);
+    priceRepository.saveMany(records);
 
-    expect(readHistory()).toEqual([]);
+    const response = await get(
+      `/cryptocurrencies/${bitcoin.id}/history`,
+    );
 
-    expect(
-      cryptocurrencyRepository.findById(bitcoin.id).lastUpdatedAt,
-    ).toBeNull();
+    const expected = [...records].reverse().slice(0, 20);
 
-    expect(
-      cryptocurrencyRepository.findById(ethereum.id).lastUpdatedAt,
-    ).toBeNull();
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expected);
+  });
+
+  test("применяет limit и offset к отсортированной истории", async () => {
+    const records = makeHistory(bitcoin.id, 5);
+    priceRepository.saveMany(records);
+
+    const response = await get(
+      `/cryptocurrencies/${bitcoin.id}/history?limit=2&offset=1`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([
+      records[3],
+      records[2],
+    ]);
+  });
+
+  test.each([1, 100])(
+    "принимает допустимый limit=%s и offset=0",
+    async (limit) => {
+      const records = makeHistory(bitcoin.id, 105);
+      priceRepository.saveMany(records);
+
+      const response = await get(
+        `/cryptocurrencies/${bitcoin.id}/history?limit=${limit}&offset=0`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual(
+        [...records].reverse().slice(0, limit),
+      );
+    },
+  );
+
+  test("использует limit по умолчанию при передаче только offset", async () => {
+    const records = makeHistory(bitcoin.id, 25);
+    priceRepository.saveMany(records);
+
+    const response = await get(
+      `/cryptocurrencies/${bitcoin.id}/history?offset=2`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      [...records].reverse().slice(2, 22),
+    );
+  });
+
+  test("возвращает пустой массив при смещении за конец истории", async () => {
+    priceRepository.saveMany(makeHistory(bitcoin.id, 3));
+
+    const response = await get(
+      `/cryptocurrencies/${bitcoin.id}/history?offset=100`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([]);
+  });
+
+  test.each([
+    "limit=0",
+    "limit=101",
+    "limit=-1",
+    "limit=1.5",
+    "limit=abc",
+    "limit=",
+    "offset=-1",
+    "offset=1.5",
+    "offset=abc",
+    "offset=",
+    "limit=9007199254740992",
+    "offset=9007199254740992",
+    "limit=1&limit=2",
+    "offset=0&offset=1",
+    "extra=1",
+  ])("отклоняет некорректные параметры: %s", async (query) => {
+    const response = await get(
+      `/cryptocurrencies/${bitcoin.id}/history?${query}`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+  });
+});
+
+describe.each(["price", "history"])(
+  "Общие ошибки GET /cryptocurrencies/:id/%s",
+  (endpoint) => {
+    test("возвращает 404 для отсутствующей монеты", async () => {
+      const response = await get(
+        `/cryptocurrencies/999/${endpoint}`,
+      );
+
+      expect(response.status).toBe(404);
+      expect(response.body.error.code).toBe(
+        "CRYPTOCURRENCY_NOT_FOUND",
+      );
+    });
+
+    test.each([
+      "abc",
+      "0",
+      "-1",
+      "1.5",
+      "9007199254740992",
+    ])("отклоняет некорректный id: %s", async (id) => {
+      const response = await get(
+        `/cryptocurrencies/${id}/${endpoint}`,
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    });
+  },
+);
+
+describe("Чтение цен не изменяет данные", () => {
+  test("оба эндпоинта не вызывают CMC и не изменяют БД", async () => {
+    priceRepository.saveMany(makeHistory(bitcoin.id, 3));
+
+    const readAllHistory = () => context.db.prepare(`
+      SELECT cryptocurrency_id, price, received_at
+      FROM price_history
+      ORDER BY cryptocurrency_id, received_at
+    `).all();
+
+    const historyBefore = readAllHistory();
+    const coinsBefore = cryptocurrencyRepository.findAll();
+
+    await get(`/cryptocurrencies/${bitcoin.id}/price`)
+      .expect(200);
+
+    await get(`/cryptocurrencies/${bitcoin.id}/history`)
+      .expect(200);
+
+    expect(context.cmcClient.getLatestPrices)
+      .not.toHaveBeenCalled();
+
+    expect(readAllHistory()).toEqual(historyBefore);
+    expect(cryptocurrencyRepository.findAll()).toEqual(coinsBefore);
   });
 });
